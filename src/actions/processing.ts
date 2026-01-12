@@ -1,8 +1,8 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { process as processTable, todoItem, account } from "@/lib/db/schema";
-import { and, eq, isNull } from "drizzle-orm";
+import { process as processTable, todoItem, account, user } from "@/lib/db/schema";
+import { and, eq, isNull, gte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
@@ -14,6 +14,31 @@ const todoItemSchema = z.object({
 
 export async function createNewProcess(text: string, userId: string) {
   try {
+    // Check user bypass flag
+    const userRecord = await db.query.user.findFirst({
+      where: eq(user.id, userId),
+    });
+
+    if (!userRecord?.bypassRateLimit) {
+      // Check usage in the last 7 days
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const usageCount = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(processTable)
+        .where(
+          and(
+            eq(processTable.userId, userId),
+            gte(processTable.createdAt, sevenDaysAgo)
+          )
+        );
+
+      if (usageCount[0].count >= 10) {
+        return { error: "Rate limit exceeded: You can only process tasks 10 times per week" };
+      }
+    }
+
     const result = await db
       .insert(processTable)
       .values({ id: crypto.randomUUID(), userId, content: text })
