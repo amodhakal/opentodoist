@@ -1,7 +1,6 @@
 "use client";
 
 import { authClient, signIn } from "@/lib/auth/client";
-import { useEffect } from "react";
 
 export default function HomePage() {
   const { isPending, error, data: session } = authClient.useSession();
