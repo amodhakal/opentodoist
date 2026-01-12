@@ -8,17 +8,17 @@ export const auth = betterAuth({
     provider: "pg",
   }),
   plugins: [
-    // genericOAuth({
-    //   config: [
-    //     {
-    //       providerId: "instagram",
-    //       clientId: process.env.INSTAGRAM_CLIENT_ID as string,
-    //       clientSecret: process.env.INSTAGRAM_CLIENT_SECRET as string,
-    //       authorizationUrl: "https://api.instagram.com/oauth/authorize",
-    //       tokenUrl: "https://api.instagram.com/oauth/access_token",
-    //       scopes: ["user_profile", "user_media"],
-    //     },
-    //   ],
-    // }),
+    genericOAuth({
+      config: [
+        {
+          providerId: "todoist",
+          clientId: process.env.TODOIST_ID as string,
+          clientSecret: process.env.TODIST_SECRET as string,
+          authorizationUrl: process.env.TODOIST_OAUTH_URL,
+          tokenUrl: process.env.TODOIST_TOKEN_URL,
+          scopes: ["data:read_write"],
+        },
+      ],
+    }),
   ],
 });
