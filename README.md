@@ -46,24 +46,26 @@ Create `.env.local`:
 
 ```bash
 # Database
-DATABASE_URL="postgresql://..."
+DATABASE_URL=
 
-# Auth
-BETTER_AUTH_SECRET="<generate with: openssl rand -base64 32>"
-BETTER_AUTH_URL="http://localhost:3000"
+# Gemini Key
+GEMINI_API=
 
-# Todoist OAuth
-TODOIST_CLIENT_ID="your_client_id"
-TODOIST_CLIENT_SECRET="your_client_secret"
+# Better Auth Secret
+BETTER_AUTH_SECRET=
 
-# Google AI
-GOOGLE_GENERATIVE_AI_API_KEY="your_gemini_api_key"
+# Todoist API
+TODOIST_ID=
+TODOIST_SECRET=
+TODOIST_OAUTH_URL=
+TODOIST_TOKEN_URL=
+TODOIST_REDIRECT_URL=
+TODOIST_USERINFO_URL=
 ```
 
 **Get Todoist OAuth credentials:**
 1. Go to https://developer.todoist.com/appconsole.html
 2. Create new app
-3. Set redirect URI: `http://localhost:3000/api/auth/callback/todoist`
 4. Copy Client ID and Secret
 
 ### Installation
@@ -115,14 +117,6 @@ email professor about project extension by wednesday
 
 ```bash
 vercel deploy
-```
-
-Add environment variables in Vercel dashboard. Update `BETTER_AUTH_URL` to your production domain.
-
-### Docker
-
-```dockerfile
-# Add a proper Dockerfile if you want this deployment option
 ```
 
 ## Rate Limits
