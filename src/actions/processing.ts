@@ -127,7 +127,9 @@ export async function processTextWithAI(text: string, processId: string) {
     Text to process:
     ${text}
     
-    Return empty array [] if no tasks found.`;
+    Return empty array [] if no tasks found.
+    
+    The current datetime is ${ new Date().toLocaleString()}`;
 
     const result = await model.generateContent(prompt);
     const response = result.response;
