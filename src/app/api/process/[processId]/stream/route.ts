@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { process as processTable } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 
 const POLLING_INTERVAL = 2000;
 
@@ -10,10 +10,10 @@ function sendEvent(data: object): string {
 }
 
 export async function GET(
-  request: Request,
-  { params }: { params: { processId: string } },
+  request: NextRequest,
+  { params }: { params: Promise<{ processId: string }> },
 ) {
-  const { processId } = params;
+  const { processId } = await params;
   let lastStatus: string | null = null;
   let isStreaming = true;
   const encoder = new TextEncoder();
