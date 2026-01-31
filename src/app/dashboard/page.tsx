@@ -1,5 +1,6 @@
 "use client";
 
+import { TodoItemRow } from "@/components/TodoItemRow";
 import {
   createNewProcess,
   processTextWithAI,
@@ -8,13 +9,13 @@ import {
   approveAllTodoItems,
   getTodoistAccessToken
 } from "@/actions/processing";
-import { authClient, signIn } from "@/lib/auth/client";
+import { authClient, signIn, signOut } from "@/lib/auth/client";
 import { FormEvent, useState } from "react";
 import toast from "react-hot-toast";
 
-type ProcessStatus = "incomplete" | "processing" | "processed" | "accepted" | "error";
+export type ProcessStatus = "incomplete" | "processing" | "processed" | "accepted" | "error";
 
-interface TodoItem {
+export interface TodoItem {
   id: string;
   content: string;
   priority: string | null;
@@ -23,7 +24,7 @@ interface TodoItem {
   processId: string;
 }
 
-interface Process {
+export interface Process {
   id: string;
   status: ProcessStatus;
   content: string;
@@ -96,123 +97,123 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-6xl mx-auto px-4 py-6">
+      <header className="sticky top-0 z-10 bg-white border-b border-gray-200">
+        <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-red-500 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold">✓</span>
+              <div className="w-8 h-8 bg-red-500 rounded-lg flex items-center justify-center shrink-0">
+                <span className="text-white font-bold text-sm">✓</span>
               </div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900">Open Todoist</h1>
-                <p className="text-sm text-gray-600">Bulk task management</p>
-              </div>
+              <h1 className="text-xl font-bold text-gray-900">Open Todoist</h1>
             </div>
             <div className="flex items-center gap-4">
-              <div className="text-right">
-                <p className="font-medium text-gray-900">{session.user.name}</p>
-                <p className="text-sm text-gray-600">Connected to Todoist</p>
-              </div>
-              <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
-                <span className="text-gray-600 font-medium">
-                  {session.user.name?.charAt(0).toUpperCase()}
-                </span>
-              </div>
+              <p className="text-sm text-gray-600 hidden sm:block">
+                Signed in as <span className="font-medium text-gray-800">{session.user.name}</span>
+              </p>
+              <button
+                onClick={async () => signOut()}
+                className="text-sm font-medium text-red-600 hover:text-red-700 transition-colors"
+              >
+                Sign Out
+              </button>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      <main className="max-w-4xl mx-auto px-4 py-12">
         <div className="flex flex-col gap-8">
 
           {currentProcess && (
             <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
-                  <span className="text-red-600 font-semibold">⚡</span>
-                </div>
-                <h2 className="text-xl font-semibold text-gray-900">Current Process</h2>
-              </div>
-              <div className="flex items-center gap-3 mb-4">
-                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${currentProcess.status === "incomplete" ? "bg-gray-100 text-gray-800" :
+              <div className="flex justify-between items-start mb-4">
+                <h2 className="text-xl font-semibold text-gray-900">
+                  Task Processing Status
+                </h2>
+                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                    currentProcess.status === "incomplete" ? "bg-gray-100 text-gray-800" :
                     currentProcess.status === "processing" ? "bg-yellow-100 text-yellow-800" :
-                      currentProcess.status === "processed" ? "bg-blue-100 text-blue-800" :
-                        currentProcess.status === "accepted" ? "bg-green-100 text-green-800" :
-                          "bg-red-100 text-red-800"
+                    currentProcess.status === "processed" ? "bg-blue-100 text-blue-800" :
+                    currentProcess.status === "accepted" ? "bg-green-100 text-green-800" :
+                    "bg-red-100 text-red-800"
                   }`}>
-                  <span className={`inline-block w-2 h-2 rounded-full mr-2 ${currentProcess.status === "incomplete" ? "bg-gray-400" :
+                  <span className={`inline-block w-2 h-2 rounded-full mr-2 ${
+                      currentProcess.status === "incomplete" ? "bg-gray-400" :
                       currentProcess.status === "processing" ? "bg-yellow-500 animate-pulse" :
-                        currentProcess.status === "processed" ? "bg-blue-500" :
-                          currentProcess.status === "accepted" ? "bg-green-500" :
-                            "bg-red-500"
+                      currentProcess.status === "processed" ? "bg-blue-500" :
+                      currentProcess.status === "accepted" ? "bg-green-500" :
+                      "bg-red-500"
                     }`}></span>
-                  {currentProcess.status === "incomplete" ? "Pending processing" :
+                  {currentProcess.status === "incomplete" ? "Pending" :
                     currentProcess.status === "processing" ? "Processing..." :
-                      currentProcess.status === "processed" ? "Ready for review" :
-                        currentProcess.status === "accepted" ? "All tasks added to Todoist" :
-                          "Error occurred"}
+                    currentProcess.status === "processed" ? "Ready for Review" :
+                    currentProcess.status === "accepted" ? "Completed" :
+                    "Error"}
                 </span>
               </div>
               {currentProcess.status === "error" && currentProcess.errorMessage && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
                   <div className="flex items-center gap-2">
                     <span className="text-red-600">⚠️</span>
-                    <p className="text-red-800 font-medium">Error</p>
+                    <p className="text-red-800 font-medium">Error Details</p>
                   </div>
-                  <p className="text-red-700 mt-1">{currentProcess.errorMessage}</p>
+                  <p className="text-red-700 mt-1 text-sm">{currentProcess.errorMessage}</p>
                 </div>
               )}
               {currentProcess.status === "processed" && todoItems.length > 0 && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                  <h3 className="font-semibold text-blue-900 mb-3">Task Summary</h3>
-                  <div className="flex flex-wrap gap-4">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-block w-3 h-3 bg-gray-400 rounded-full"></span>
-                      <span className="text-sm text-gray-700">
-                        {todoItems.filter(t => t.isApproved === null).length} pending
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="inline-block w-3 h-3 bg-green-500 rounded-full"></span>
-                      <span className="text-sm text-green-700">
-                        {todoItems.filter(t => t.isApproved === true).length} approved
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="inline-block w-3 h-3 bg-red-500 rounded-full"></span>
-                      <span className="text-sm text-red-700">
-                        {todoItems.filter(t => t.isApproved === false).length} rejected
-                      </span>
+                <>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                    <h3 className="font-semibold text-blue-900 mb-3">Tasks to Review</h3>
+                    <div className="flex flex-wrap gap-4">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block w-3 h-3 bg-gray-400 rounded-full"></span>
+                        <span className="text-sm text-gray-700">
+                          {todoItems.filter(t => t.isApproved === null).length} pending
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block w-3 h-3 bg-green-500 rounded-full"></span>
+                        <span className="text-sm text-green-700">
+                          {todoItems.filter(t => t.isApproved === true).length} approved
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block w-3 h-3 bg-red-500 rounded-full"></span>
+                        <span className="text-sm text-red-700">
+                          {todoItems.filter(t => t.isApproved === false).length} rejected
+                        </span>
+                      </div>
                     </div>
                   </div>
-                  <div className="flex gap-3">
-                    {todoItems.filter(t => t.isApproved === null).length > 0 && (
-                      <button
-                        onClick={handleApproveAll}
-                        disabled={isApproving}
-                        className="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                      >
-                        <span>✓</span>
-                        {isApproving ? "Adding..." : "Approve All"}
-                      </button>
-                    )}
+                  <div className="flex justify-end gap-3 pt-2">
                     <button
                       onClick={handleNewProcess}
                       className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-6 py-2 rounded-lg font-medium transition-colors"
                     >
-                      New Process
+                      Start New
                     </button>
+                    {todoItems.filter(t => t.isApproved === null).length > 0 && (
+                      <button
+                        onClick={handleApproveAll}
+                        disabled={isApproving}
+                        className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                      >
+                        <span>✓</span>
+                        {isApproving ? "Adding All..." : `Approve All (${todoItems.filter(t => t.isApproved === null).length})`}
+                      </button>
+                    )}
                   </div>
-                </div>
+                </>
               )}
               {currentProcess.status === "accepted" && (
-                <button
-                  onClick={handleNewProcess}
-                  className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition-colors"
-                >
-                  Process More Text
-                </button>
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleNewProcess}
+                    className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+                  >
+                    Process More Text
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -221,11 +222,11 @@ export default function DashboardPage() {
             <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
               <div className="flex items-center gap-3 mb-6">
                 <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <span className="text-blue-600 font-semibold">👁️</span>
+                  <span className="text-blue-600 font-semibold">📋</span>
                 </div>
                 <h3 className="text-xl font-semibold text-gray-900">Preview & Approve Tasks</h3>
               </div>
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {todoItems.map((item) => (
                   <TodoItemRow
                     key={item.id}
@@ -240,23 +241,22 @@ export default function DashboardPage() {
           )}
 
           {currentProcess?.status === "accepted" && (
-            <div className="bg-green-50 border border-green-200 rounded-xl p-6">
+            <div className="bg-white border border-green-200 rounded-xl p-6 shadow-md">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                  <span className="text-green-600 text-xl">✅</span>
+                <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center">
+                  <span className="text-white font-bold text-xl">✓</span>
                 </div>
-                <h3 className="text-xl font-semibold text-green-800">Success!</h3>
+                <h3 className="text-xl font-semibold text-gray-900">Tasks Successfully Added!</h3>
               </div>
-              <p className="text-green-700 mb-3">
-                {todoItems.length} task{todoItems.length !== 1 ? "s" : ""}
-                {todoItems.length !== 1 ? " have" : " has"} been added to your Todoist.
+              <p className="text-gray-700 mb-4 border-b pb-4">
+                A total of {todoItems.filter(t => t.isApproved === true).length} task{todoItems.filter(t => t.isApproved === true).length !== 1 ? "s" : ""} have been added to your Todoist.
               </p>
               <div className="flex gap-4 text-sm">
-                <span className="text-green-600">
+                <span className="text-green-600 font-medium">
                   ✓ {todoItems.filter(t => t.isApproved === true).length} approved
                 </span>
                 {todoItems.filter(t => t.isApproved === false).length > 0 && (
-                  <span className="text-red-600">
+                  <span className="text-red-600 font-medium">
                     ✗ {todoItems.filter(t => t.isApproved === false).length} rejected
                   </span>
                 )}
@@ -285,7 +285,7 @@ export default function DashboardPage() {
                 onChange={(e) => setText(e.target.value)}
                 id="newtext"
                 placeholder="Example: Study for math exam on Monday, finish project report by Friday, buy groceries for dinner party, call dentist for appointment..."
-                className="p-4 w-full h-44 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-red-500 focus:border-transparent text-gray-900 placeholder-gray-500"
+                className="p-4 w-full h-44 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-red-500 focus:border-red-500 text-gray-900 placeholder-gray-500 transition-shadow"
               ></textarea>
               <div className="flex justify-between items-center">
                 <span className={`text-sm font-medium ${text.length > 9000 ? "text-red-600" :
@@ -474,66 +474,4 @@ export default function DashboardPage() {
     setTodoItems([]);
     setText("");
   }
-}
-
-function TodoItemRow({
-  item,
-  onApprove,
-  onReject,
-  disabled
-}: {
-  item: TodoItem;
-  onApprove: () => void;
-  onReject: () => void;
-  disabled: boolean;
-}) {
-  const priorityColors = {
-    p1: "bg-red-100 text-red-800 border-red-200",
-    p2: "bg-orange-100 text-orange-800 border-orange-200",
-    p3: "bg-yellow-100 text-yellow-800 border-yellow-200",
-    p4: "bg-gray-100 text-gray-800 border-gray-200",
-  };
-
-  const priorityLabels = {
-    p1: "High",
-    p2: "Medium-High",
-    p3: "Medium",
-    p4: "Low",
-  };
-
-  return (
-    <div className="flex items-start gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors">
-      <div className="flex-1">
-        <p className="font-medium text-gray-900 mb-2">{item.content}</p>
-        <div className="flex flex-wrap gap-2">
-          <span className={`text-xs px-3 py-1 rounded-full font-medium border ${priorityColors[item.priority as keyof typeof priorityColors]}`}>
-            {priorityLabels[item.priority as keyof typeof priorityLabels]} Priority
-          </span>
-          {item.dueDate && (
-            <span className="text-xs px-3 py-1 rounded-full bg-blue-100 text-blue-800 border border-blue-200 font-medium">
-              📅 Due: {item.dueDate.toLocaleDateString()}
-            </span>
-          )}
-        </div>
-      </div>
-      <div className="flex gap-2">
-        <button
-          onClick={onApprove}
-          disabled={disabled}
-          className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-        >
-          <span>✓</span>
-          Approve
-        </button>
-        <button
-          onClick={onReject}
-          disabled={disabled}
-          className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-        >
-          <span>✗</span>
-          Reject
-        </button>
-      </div>
-    </div>
-  );
 }
