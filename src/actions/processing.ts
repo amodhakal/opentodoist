@@ -5,6 +5,7 @@ import { process as processTable, todoItem, account, user } from "@/lib/db/schem
 import { and, eq, isNull, gte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import * as Sentry from "@sentry/nextjs";
 
 const todoItemSchema = z.object({
   content: z.string().min(1),
@@ -109,12 +110,24 @@ export async function addTodoToTodoist(
 }
 
 export async function processTextWithAI(text: string, processId: string) {
-  try {
-    const apiKey = process.env.GEMINI_API!;
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+  const startTime = Date.now();
+  
+  return await Sentry.startSpan(
+    {
+      name: "ai.process-text",
+      op: "ai.processing",
+      attributes: {
+        "ai.process_id": processId,
+        "ai.text_length": text.length,
+      },
+    },
+    async (span) => {
+      try {
+        const apiKey = process.env.GEMINI_API!;
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
-    const prompt = `You are a task extraction assistant. Parse text and extract all actionable tasks/todos.
+        const prompt = `You are a task extraction assistant. Parse text and extract all actionable tasks/todos.
     Return ONLY a valid JSON array (no markdown, no explanation) with this structure:
     [{"content": "task description", "priority": "p1"|"p2"|"p3"|"p4", "dueDate": "YYYY-MM-DD"|null}]
     
@@ -131,67 +144,104 @@ export async function processTextWithAI(text: string, processId: string) {
     
     The current datetime is ${ new Date().toLocaleString()}`;
 
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    const content = response.text();
+        const aiStartTime = Date.now();
+        const result = await model.generateContent(prompt);
+        const aiEndTime = Date.now();
+        const aiDuration = aiEndTime - aiStartTime;
+        
+        // Track AI request duration
+        span.setAttribute("ai.duration_ms", aiDuration);
+        Sentry.setMeasurement("ai_request_duration", aiDuration, "millisecond");
 
-    let parsedData;
-    try {
-      const cleanedContent = content
-        .replace(/```json\n?|\n?```\n?/g, "")
-        .trim();
-      const parsed = JSON.parse(cleanedContent);
-      if (Array.isArray(parsed)) {
-        parsedData = parsed;
-      } else if (parsed.todos && Array.isArray(parsed.todos)) {
-        parsedData = parsed.todos;
-      } else if (parsed.items && Array.isArray(parsed.items)) {
-        parsedData = parsed.items;
-      } else if (parsed.tasks && Array.isArray(parsed.tasks)) {
-        parsedData = parsed.tasks;
-      } else if (parsed.data && Array.isArray(parsed.data)) {
-        parsedData = parsed.data;
-      } else {
-        parsedData = [];
+        const response = result.response;
+        const content = response.text();
+
+        let parsedData;
+        try {
+          const cleanedContent = content
+            .replace(/```json\n?|\n?```\n?/g, "")
+            .trim();
+          const parsed = JSON.parse(cleanedContent);
+          if (Array.isArray(parsed)) {
+            parsedData = parsed;
+          } else if (parsed.todos && Array.isArray(parsed.todos)) {
+            parsedData = parsed.todos;
+          } else if (parsed.items && Array.isArray(parsed.items)) {
+            parsedData = parsed.items;
+          } else if (parsed.tasks && Array.isArray(parsed.tasks)) {
+            parsedData = parsed.tasks;
+          } else if (parsed.data && Array.isArray(parsed.data)) {
+            parsedData = parsed.data;
+          } else {
+            parsedData = [];
+          }
+        } catch (parseErr) {
+          parsedData = [];
+          Sentry.captureException(parseErr, {
+            tags: { process_id: processId, error_type: "ai_parse_error" },
+            extra: { raw_response: content },
+          });
+        }
+
+        const todoItems = todoItemSchema.array().parse(parsedData);
+        
+        // Track number of tasks generated
+        span.setAttribute("ai.tasks_generated", todoItems.length);
+        Sentry.setMeasurement("ai_tasks_generated", todoItems.length, "none");
+
+        const insertedItems = await db
+          .insert(todoItem)
+          .values(
+            todoItems.map((item) => ({
+              id: crypto.randomUUID(),
+              content: item.content,
+              priority: item.priority,
+              dueDate: item.dueDate ? new Date(item.dueDate) : null,
+              processId,
+              isApproved: null,
+            })),
+          )
+          .returning();
+
+        await db
+          .update(processTable)
+          .set({ status: "processed", updatedAt: new Date() })
+          .where(eq(processTable.id, processId));
+
+        // Track total processing time
+        const totalDuration = Date.now() - startTime;
+        span.setAttribute("ai.total_duration_ms", totalDuration);
+        Sentry.setMeasurement("ai_total_processing_duration", totalDuration, "millisecond");
+
+        return { todoItems: insertedItems };
+      } catch (err) {
+        console.error("Error processing text with AI:", err);
+        
+        // Capture AI generation errors in Sentry
+        Sentry.captureException(err, {
+          tags: { 
+            process_id: processId, 
+            error_type: "ai_generation_error",
+            ai_provider: "gemini",
+          },
+          extra: { 
+            text_length: text.length,
+            duration_ms: Date.now() - startTime,
+          },
+        });
+        
+        await db
+          .update(processTable)
+          .set({
+            status: "error",
+            errorMessage: "AI processing failed",
+            updatedAt: new Date(),
+          })
+          .where(eq(processTable.id, processId));
+        return { error: "Failed to process text with AI" };
       }
-    } catch {
-      parsedData = [];
     }
-
-    const todoItems = todoItemSchema.array().parse(parsedData);
-
-    const insertedItems = await db
-      .insert(todoItem)
-      .values(
-        todoItems.map((item) => ({
-          id: crypto.randomUUID(),
-          content: item.content,
-          priority: item.priority,
-          dueDate: item.dueDate ? new Date(item.dueDate) : null,
-          processId,
-          isApproved: null,
-        })),
-      )
-      .returning();
-
-    await db
-      .update(processTable)
-      .set({ status: "processed", updatedAt: new Date() })
-      .where(eq(processTable.id, processId));
-
-    return { todoItems: insertedItems };
-  } catch (err) {
-    console.error("Error processing text with AI:", err);
-    await db
-      .update(processTable)
-      .set({
-        status: "error",
-        errorMessage: "AI processing failed",
-        updatedAt: new Date(),
-      })
-      .where(eq(processTable.id, processId));
-    return { error: "Failed to process text with AI" };
-  }
+  );
 }
 
 export async function approveTodoItem(
@@ -199,141 +249,232 @@ export async function approveTodoItem(
   accessToken: string,
   processId: string,
 ) {
-  try {
-    const todo = await db.query.todoItem.findFirst({
-      where: eq(todoItem.id, todoItemId),
-    });
+  return await Sentry.startSpan(
+    {
+      name: "task.approve",
+      op: "task.action",
+      attributes: {
+        "task.action": "approve",
+        "task.process_id": processId,
+      },
+    },
+    async () => {
+      try {
+        const todo = await db.query.todoItem.findFirst({
+          where: eq(todoItem.id, todoItemId),
+        });
 
-    if (!todo) {
-      return { error: "Todo item not found" };
+        if (!todo) {
+          Sentry.captureMessage("Todo item not found for approval", {
+            level: "warning",
+            tags: { todo_item_id: todoItemId, process_id: processId },
+          });
+          return { error: "Todo item not found" };
+        }
+
+        const priorityMap = { p1: 4, p2: 3, p3: 2, p4: 1 };
+        const priority =
+          priorityMap[todo.priority as keyof typeof priorityMap] || 1;
+
+        const dueDateStr = todo.dueDate
+          ? todo.dueDate.toISOString().split("T")[0]
+          : undefined;
+
+        const result = await addTodoToTodoist(
+          accessToken,
+          todo.content,
+          priority,
+          dueDateStr,
+        );
+
+        if (result.error) {
+          Sentry.captureMessage("Failed to add task to Todoist", {
+            level: "error",
+            tags: { todo_item_id: todoItemId, process_id: processId },
+            extra: { error: result.error },
+          });
+          return { error: result.error };
+        }
+
+        await db
+          .update(todoItem)
+          .set({ isApproved: true })
+          .where(eq(todoItem.id, todoItemId));
+
+        // Track task approval
+        Sentry.setTag("task_approved", "true");
+        Sentry.setMeasurement("task_action", 1, "none");
+
+        const pendingItems = await db.query.todoItem.findMany({
+          where: and(
+            eq(todoItem.processId, processId),
+            isNull(todoItem.isApproved),
+          ),
+        });
+
+        if (pendingItems.length === 0) {
+          const rejectedItems = await db.query.todoItem.findMany({
+            where: and(
+              eq(todoItem.processId, processId),
+              eq(todoItem.isApproved, false),
+            ),
+          });
+
+          const finalStatus = rejectedItems.length === 0 ? "accepted" : "processed";
+          
+          await db
+            .update(processTable)
+            .set({
+              status: finalStatus,
+              updatedAt: new Date(),
+            })
+            .where(eq(processTable.id, processId));
+          
+          // Track completion metrics
+          const allItems = await db.query.todoItem.findMany({
+            where: eq(todoItem.processId, processId),
+          });
+          const approvedCount = allItems.filter(i => i.isApproved === true).length;
+          const rejectedCount = allItems.filter(i => i.isApproved === false).length;
+          
+          Sentry.setMeasurement("tasks_approved", approvedCount, "none");
+          Sentry.setMeasurement("tasks_rejected", rejectedCount, "none");
+          Sentry.setMeasurement("task_acceptance_rate", approvedCount / allItems.length, "ratio");
+        }
+
+        return { success: true, task: result.task };
+      } catch (err) {
+        console.error("Error approving todo:", err);
+        Sentry.captureException(err, {
+          tags: { action: "approve", todo_item_id: todoItemId, process_id: processId },
+        });
+        return { error: "Failed to approve todo item" };
+      }
     }
-
-    const priorityMap = { p1: 4, p2: 3, p3: 2, p4: 1 };
-    const priority =
-      priorityMap[todo.priority as keyof typeof priorityMap] || 1;
-
-    const dueDateStr = todo.dueDate
-      ? todo.dueDate.toISOString().split("T")[0]
-      : undefined;
-
-    const result = await addTodoToTodoist(
-      accessToken,
-      todo.content,
-      priority,
-      dueDateStr,
-    );
-
-    if (result.error) {
-      return { error: result.error };
-    }
-
-    await db
-      .update(todoItem)
-      .set({ isApproved: true })
-      .where(eq(todoItem.id, todoItemId));
-
-    const pendingItems = await db.query.todoItem.findMany({
-      where: and(
-        eq(todoItem.processId, processId),
-        isNull(todoItem.isApproved),
-      ),
-    });
-
-    if (pendingItems.length === 0) {
-      const rejectedItems = await db.query.todoItem.findMany({
-        where: and(
-          eq(todoItem.processId, processId),
-          eq(todoItem.isApproved, false),
-        ),
-      });
-
-      await db
-        .update(processTable)
-        .set({
-          status: rejectedItems.length === 0 ? "accepted" : "processed",
-          updatedAt: new Date(),
-        })
-        .where(eq(processTable.id, processId));
-    }
-
-    return { success: true, task: result.task };
-  } catch (err) {
-    console.error("Error approving todo:", err);
-    return { error: "Failed to approve todo item" };
-  }
+  );
 }
 
 export async function rejectTodoItem(todoItemId: string, processId: string) {
-  try {
-    await db
-      .update(todoItem)
-      .set({ isApproved: false })
-      .where(eq(todoItem.id, todoItemId));
+  return await Sentry.startSpan(
+    {
+      name: "task.reject",
+      op: "task.action",
+      attributes: {
+        "task.action": "reject",
+        "task.process_id": processId,
+      },
+    },
+    async () => {
+      try {
+        await db
+          .update(todoItem)
+          .set({ isApproved: false })
+          .where(eq(todoItem.id, todoItemId));
 
-    const pendingItems = await db.query.todoItem.findMany({
-      where: and(
-        eq(todoItem.processId, processId),
-        isNull(todoItem.isApproved),
-      ),
-    });
+        // Track task rejection
+        Sentry.setTag("task_rejected", "true");
+        Sentry.setMeasurement("task_action", 0, "none");
 
-    if (pendingItems.length === 0) {
-      await db
-        .update(processTable)
-        .set({
-          status: "processed",
-          updatedAt: new Date(),
-        })
-        .where(eq(processTable.id, processId));
+        const pendingItems = await db.query.todoItem.findMany({
+          where: and(
+            eq(todoItem.processId, processId),
+            isNull(todoItem.isApproved),
+          ),
+        });
+
+        if (pendingItems.length === 0) {
+          await db
+            .update(processTable)
+            .set({
+              status: "processed",
+              updatedAt: new Date(),
+            })
+            .where(eq(processTable.id, processId));
+          
+          // Track completion metrics
+          const allItems = await db.query.todoItem.findMany({
+            where: eq(todoItem.processId, processId),
+          });
+          const approvedCount = allItems.filter(i => i.isApproved === true).length;
+          const rejectedCount = allItems.filter(i => i.isApproved === false).length;
+          
+          Sentry.setMeasurement("tasks_approved", approvedCount, "none");
+          Sentry.setMeasurement("tasks_rejected", rejectedCount, "none");
+          Sentry.setMeasurement("task_rejection_rate", rejectedCount / allItems.length, "ratio");
+        }
+
+        return { success: true };
+      } catch (err) {
+        console.error("Error rejecting todo:", err);
+        Sentry.captureException(err, {
+          tags: { action: "reject", todo_item_id: todoItemId, process_id: processId },
+        });
+        return { error: "Failed to reject todo item" };
+      }
     }
-
-    return { success: true };
-  } catch (err) {
-    console.error("Error rejecting todo:", err);
-    return { error: "Failed to reject todo item" };
-  }
+  );
 }
 
 export async function approveAllTodoItems(
   processId: string,
   accessToken: string,
 ) {
-  try {
-    const pendingItems = await db.query.todoItem.findMany({
-      where: and(
-        eq(todoItem.processId, processId),
-        isNull(todoItem.isApproved),
-      ),
-    });
+  return await Sentry.startSpan(
+    {
+      name: "task.approve_all",
+      op: "task.action",
+      attributes: {
+        "task.action": "approve_all",
+        "task.process_id": processId,
+      },
+    },
+    async () => {
+      try {
+        const pendingItems = await db.query.todoItem.findMany({
+          where: and(
+            eq(todoItem.processId, processId),
+            isNull(todoItem.isApproved),
+          ),
+        });
 
-    for (const item of pendingItems) {
-      const priorityMap = { p1: 4, p2: 3, p3: 2, p4: 1 };
-      const priority =
-        priorityMap[item.priority as keyof typeof priorityMap] || 1;
-      const dueDateStr = item.dueDate
-        ? item.dueDate.toISOString().split("T")[0]
-        : undefined;
+        for (const item of pendingItems) {
+          const priorityMap = { p1: 4, p2: 3, p3: 2, p4: 1 };
+          const priority =
+            priorityMap[item.priority as keyof typeof priorityMap] || 1;
+          const dueDateStr = item.dueDate
+            ? item.dueDate.toISOString().split("T")[0]
+            : undefined;
 
-      await addTodoToTodoist(accessToken, item.content, priority, dueDateStr);
+          await addTodoToTodoist(accessToken, item.content, priority, dueDateStr);
+        }
+
+        await db
+          .update(todoItem)
+          .set({ isApproved: true })
+          .where(
+            and(eq(todoItem.processId, processId), isNull(todoItem.isApproved)),
+          );
+
+        await db
+          .update(processTable)
+          .set({ status: "accepted", updatedAt: new Date() })
+          .where(eq(processTable.id, processId));
+
+        // Track bulk approval metrics
+        Sentry.setMeasurement("tasks_approved_bulk", pendingItems.length, "none");
+        Sentry.setMeasurement("task_acceptance_rate", 1.0, "ratio");
+        Sentry.setTag("task_approved_all", "true");
+
+        return { success: true, count: pendingItems.length };
+      } catch (err) {
+        console.error("Error approving all todos:", err);
+        Sentry.captureException(err, {
+          tags: { action: "approve_all", process_id: processId },
+        });
+        return { error: "Failed to approve all todo items" };
+      }
     }
-
-    await db
-      .update(todoItem)
-      .set({ isApproved: true })
-      .where(
-        and(eq(todoItem.processId, processId), isNull(todoItem.isApproved)),
-      );
-
-    await db
-      .update(processTable)
-      .set({ status: "accepted", updatedAt: new Date() })
-      .where(eq(processTable.id, processId));
-
-    return { success: true, count: pendingItems.length };
-  } catch (err) {
-    console.error("Error approving all todos:", err);
-    return { error: "Failed to approve all todo items" };
-  }
+  );
 }
 
 export async function getProcessWithTodoItems(processId: string) {

@@ -4,6 +4,7 @@ import "./globals.css";
 import { Toaster } from "react-hot-toast";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { Analytics } from "@vercel/analytics/next";
+import * as Sentry from "@sentry/nextjs";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -34,7 +35,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased dark bg-black`}
       >
-        {children}
+        <Sentry.ErrorBoundary fallback={<div>Something went wrong. Please refresh the page.</div>}>
+          {children}
+        </Sentry.ErrorBoundary>
         <Toaster position="top-center" />
         <SpeedInsights />
         <Analytics />
