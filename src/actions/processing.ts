@@ -62,10 +62,62 @@ export async function getTodoistAccessToken(userId: string) {
       return { error: "No Todoist access token found" };
     }
 
+    if (accountRecord.accessTokenExpiresAt && accountRecord.accessTokenExpiresAt < new Date()) {
+      if (accountRecord.refreshToken && accountRecord.refreshTokenExpiresAt && accountRecord.refreshTokenExpiresAt > new Date()) {
+        const refreshResult = await refreshTodoistToken(accountRecord.refreshToken);
+        if (refreshResult.error) {
+          return { error: refreshResult.error };
+        }
+        return { accessToken: refreshResult.accessToken! };
+      }
+      return { error: "Todoist token expired. Please reconnect your Todoist account." };
+    }
+
     return { accessToken: accountRecord.accessToken };
   } catch (err) {
     console.error("Error fetching Todoist token:", err);
     return { error: "Failed to get Todoist access token" };
+  }
+}
+
+async function refreshTodoistToken(refreshToken: string) {
+  try {
+    const response = await fetch(process.env.TODOIST_TOKEN_URL as string, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: process.env.TODOIST_ID as string,
+        client_secret: process.env.TODOIST_SECRET as string,
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error("Todoist token refresh error:", error);
+      return { error: "Failed to refresh Todoist token. Please reconnect your account." };
+    }
+
+    const data = await response.json();
+    const newAccessToken = data.access_token;
+    const newRefreshToken = data.refresh_token || refreshToken;
+    const expiresIn = data.expires_in;
+
+    await db
+      .update(account)
+      .set({
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
+        accessTokenExpiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(account.refreshToken, refreshToken));
+
+    return { accessToken: newAccessToken };
+  } catch (err) {
+    console.error("Error refreshing Todoist token:", err);
+    return { error: "Failed to refresh Todoist token" };
   }
 }
 
@@ -217,6 +269,23 @@ export async function processTextWithAI(text: string, processId: string) {
       } catch (err) {
         console.error("Error processing text with AI:", err);
         
+        let errorMessage = "AI processing failed";
+        if (err instanceof Error) {
+          if (err.message.includes("quota") || err.message.includes("quota exceeded")) {
+            errorMessage = "AI service quota exceeded. Please try again later.";
+          } else if (err.message.includes("rate limit")) {
+            errorMessage = "AI service is busy. Please wait a moment and try again.";
+          } else if (err.message.includes("timeout") || err.message.includes("deadline")) {
+            errorMessage = "AI request timed out. Please try again with shorter text.";
+          } else if (err.message.includes("API key") || err.message.includes("authentication")) {
+            errorMessage = "AI service configuration error. Please contact support.";
+          } else if (err.message.includes("model")) {
+            errorMessage = "AI model unavailable. Please try again later.";
+          } else {
+            errorMessage = `AI processing failed: ${err.message}`;
+          }
+        }
+        
         // Capture AI generation errors in Sentry
         Sentry.captureException(err, {
           tags: { 
@@ -234,11 +303,11 @@ export async function processTextWithAI(text: string, processId: string) {
           .update(processTable)
           .set({
             status: "error",
-            errorMessage: "AI processing failed",
+            errorMessage,
             updatedAt: new Date(),
           })
           .where(eq(processTable.id, processId));
-        return { error: "Failed to process text with AI" };
+        return { error: errorMessage };
       }
     }
   );
@@ -437,15 +506,25 @@ export async function approveAllTodoItems(
           ),
         });
 
-        for (const item of pendingItems) {
-          const priorityMap = { p1: 4, p2: 3, p3: 2, p4: 1 };
-          const priority =
-            priorityMap[item.priority as keyof typeof priorityMap] || 1;
-          const dueDateStr = item.dueDate
-            ? item.dueDate.toISOString().split("T")[0]
-            : undefined;
+        const priorityMap = { p1: 4, p2: 3, p3: 2, p4: 1 };
+        const results = await Promise.all(
+          pendingItems.map(async (item) => {
+            const priority = priorityMap[item.priority as keyof typeof priorityMap] || 1;
+            const dueDateStr = item.dueDate
+              ? item.dueDate.toISOString().split("T")[0]
+              : undefined;
+            return addTodoToTodoist(accessToken, item.content, priority, dueDateStr);
+          })
+        );
 
-          await addTodoToTodoist(accessToken, item.content, priority, dueDateStr);
+        const failedResults = results.filter((r) => r.error);
+        if (failedResults.length > 0) {
+          Sentry.captureMessage("Some tasks failed during bulk approval", {
+            level: "warning",
+            tags: { process_id: processId },
+            extra: { failed_count: failedResults.length, total_count: pendingItems.length },
+          });
+          return { error: `${failedResults.length} of ${pendingItems.length} tasks failed to add to Todoist` };
         }
 
         await db
@@ -495,5 +574,98 @@ export async function getProcessWithTodoItems(processId: string) {
   } catch (err) {
     console.error("Error fetching process:", err);
     return { error: "Failed to fetch process" };
+  }
+}
+
+export async function editTodoItem(
+  todoItemId: string,
+  updates: { content?: string; priority?: "p1" | "p2" | "p3" | "p4"; dueDate?: Date | null },
+) {
+  try {
+    const todo = await db.query.todoItem.findFirst({
+      where: eq(todoItem.id, todoItemId),
+    });
+
+    if (!todo) {
+      return { error: "Todo item not found" };
+    }
+
+    if (todo.isApproved !== null) {
+      return { error: "Cannot edit an already approved or rejected task" };
+    }
+
+    const updateData: Record<string, unknown> = {};
+    if (updates.content !== undefined) {
+      if (updates.content.trim().length === 0) {
+        return { error: "Task content cannot be empty" };
+      }
+      updateData.content = updates.content.trim();
+    }
+    if (updates.priority !== undefined) {
+      updateData.priority = updates.priority;
+    }
+    if (updates.dueDate !== undefined) {
+      updateData.dueDate = updates.dueDate;
+    }
+
+    const result = await db
+      .update(todoItem)
+      .set(updateData)
+      .where(eq(todoItem.id, todoItemId))
+      .returning();
+
+    return { todoItem: result[0] };
+  } catch (err) {
+    console.error("Error editing todo item:", err);
+    return { error: "Failed to edit todo item" };
+  }
+}
+
+export async function getUserProcesses(userId: string) {
+  try {
+    const processes = await db.query.process.findMany({
+      where: eq(processTable.userId, userId),
+      orderBy: (process, { desc }) => [desc(process.createdAt)],
+      limit: 50,
+      with: {
+        todoItems: true,
+      },
+    });
+
+    return { processes };
+  } catch (err) {
+    console.error("Error fetching user processes:", err);
+    return { error: "Failed to fetch process history" };
+  }
+}
+
+export async function reprocessProcess(processId: string) {
+  try {
+    const processRecord = await db.query.process.findFirst({
+      where: eq(processTable.id, processId),
+    });
+
+    if (!processRecord) {
+      return { error: "Process not found" };
+    }
+
+    if (processRecord.status !== "error") {
+      return { error: "Only failed processes can be reprocessed" };
+    }
+
+    await db
+      .update(processTable)
+      .set({
+        status: "processing",
+        errorMessage: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(processTable.id, processId));
+
+    const result = await processTextWithAI(processRecord.content, processId);
+    return result;
+  } catch (err) {
+    console.error("Error reprocessing:", err);
+    return { error: "Failed to reprocess" };
   }
 }

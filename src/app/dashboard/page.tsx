@@ -8,6 +8,9 @@ import {
   rejectTodoItem,
   approveAllTodoItems,
   getTodoistAccessToken,
+  editTodoItem,
+  getUserProcesses,
+  reprocessProcess,
 } from "@/actions/processing";
 import { authClient, signIn, signOut } from "@/lib/auth/client";
 import { FormEvent, useState } from "react";
@@ -26,10 +29,11 @@ import {
   User,
   LogOut,
   RotateCcw,
-  Send,
   ArrowRight,
-  Calendar,
   Target,
+  Clock,
+  History,
+  RefreshCw,
 } from "lucide-react";
 
 export type ProcessStatus = "incomplete" | "processing" | "processed" | "accepted" | "error";
@@ -49,6 +53,7 @@ export interface Process {
   content: string;
   errorMessage?: string | null;
   createdAt: Date;
+  todoItems?: TodoItem[];
 }
 
 // Animation variants
@@ -160,6 +165,9 @@ export default function DashboardPage() {
   const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [processHistory, setProcessHistory] = useState<Process[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   if (isPending) {
     return (
@@ -407,6 +415,16 @@ export default function DashboardPage() {
                 {/* Action Buttons */}
                 <div className="flex justify-end gap-3">
                   <motion.button
+                    onClick={handleLoadHistory}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    className="bg-zinc-800 hover:bg-zinc-700 text-white px-5 py-2.5 rounded-xl font-medium transition-colors flex items-center gap-2"
+                  >
+                    <History className="w-4 h-4" />
+                    History
+                  </motion.button>
+
+                  <motion.button
                     onClick={handleNewProcess}
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
@@ -481,6 +499,7 @@ export default function DashboardPage() {
                         item={item}
                         onApprove={() => handleApprove(item.id)}
                         onReject={() => handleReject(item.id)}
+                        onEdit={handleEditTodoItem}
                         disabled={isApproving}
                         index={index}
                       />
@@ -542,6 +561,98 @@ export default function DashboardPage() {
                     </motion.span>
                   )}
                 </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* History Panel */}
+          <AnimatePresence>
+            {showHistory && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="glass rounded-2xl p-6 glow-border"
+              >
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-purple-500/20 rounded-xl flex items-center justify-center">
+                      <Clock className="w-5 h-5 text-purple-400" />
+                    </div>
+                    <h3 className="text-xl font-semibold text-white">
+                      Process History
+                    </h3>
+                  </div>
+                  <motion.button
+                    onClick={() => setShowHistory(false)}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    className="text-zinc-400 hover:text-white transition-colors"
+                  >
+                    <XCircle className="w-5 h-5" />
+                  </motion.button>
+                </div>
+
+                {isLoadingHistory ? (
+                  <div className="space-y-3">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="bg-zinc-900/50 rounded-xl p-4 animate-pulse">
+                        <div className="h-4 bg-zinc-800 rounded w-3/4 mb-2" />
+                        <div className="h-3 bg-zinc-800 rounded w-1/2" />
+                      </div>
+                    ))}
+                  </div>
+                ) : processHistory.length === 0 ? (
+                  <div className="text-center py-8 text-zinc-500">
+                    <History className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                    <p>No process history yet</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {processHistory.map((proc) => (
+                      <motion.div
+                        key={proc.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 hover:border-zinc-700 transition-colors"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <StatusBadge status={proc.status} />
+                          <span className="text-xs text-zinc-500">
+                            {new Date(proc.createdAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <p className="text-sm text-zinc-300 line-clamp-2 mb-3">
+                          {proc.content}
+                        </p>
+                        <div className="flex gap-2">
+                          {proc.status === "error" && (
+                            <motion.button
+                              onClick={() => handleReprocess(proc.id)}
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              className="bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 border border-orange-500/30"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              Retry
+                            </motion.button>
+                          )}
+                          {(proc.status === "processed" || proc.status === "accepted") && (
+                            <motion.button
+                              onClick={() => handleSelectProcess(proc)}
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              className="bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 border border-blue-500/30"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              View
+                            </motion.button>
+                          )}
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
@@ -782,5 +893,57 @@ export default function DashboardPage() {
     setCurrentProcess(null);
     setTodoItems([]);
     setText("");
+  }
+
+  async function handleEditTodoItem(id: string, updates: { content?: string; priority?: "p1" | "p2" | "p3" | "p4"; dueDate?: Date | null }) {
+    const result = await editTodoItem(id, updates);
+    if (result.error) {
+      toast.error(result.error);
+      return;
+    }
+    if (result.todoItem) {
+      setTodoItems((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, ...result.todoItem } : item))
+      );
+      toast.success("Task updated");
+    }
+  }
+
+  async function handleLoadHistory() {
+    if (!session) return;
+    setIsLoadingHistory(true);
+    const result = await getUserProcesses(session.user.id);
+    setIsLoadingHistory(false);
+    if (result.error) {
+      toast.error(result.error);
+      return;
+    }
+    setProcessHistory(result.processes as unknown as Process[]);
+    setShowHistory(true);
+  }
+
+  async function handleReprocess(processId: string) {
+    toast.loading("Reprocessing...");
+    const result = await reprocessProcess(processId);
+    toast.remove();
+    if (result.error) {
+      toast.error(result.error);
+      return;
+    }
+    if (result.todoItems) {
+      setTodoItems(result.todoItems);
+      const processRecord = processHistory.find((p) => p.id === processId);
+      if (processRecord) {
+        setCurrentProcess({ ...processRecord, status: "processed" });
+      }
+      toast.success(`Found ${result.todoItems.length} tasks!`);
+      setShowHistory(false);
+    }
+  }
+
+  function handleSelectProcess(process: Process) {
+    setCurrentProcess(process);
+    setTodoItems(process.todoItems || []);
+    setShowHistory(false);
   }
 }

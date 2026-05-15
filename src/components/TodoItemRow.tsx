@@ -2,12 +2,14 @@
 
 import { TodoItem } from "@/app/dashboard/page";
 import { motion, AnimatePresence } from "framer-motion";
-import { Check, X, Calendar, Flag, CheckCircle2, Trash2 } from "lucide-react";
+import { Check, X, Calendar, Flag, CheckCircle2, Trash2, Edit2, Save } from "lucide-react";
+import { useState } from "react";
 
 interface TodoItemRowProps {
   item: TodoItem;
   onApprove: () => void;
   onReject: () => void;
+  onEdit?: (id: string, updates: { content?: string; priority?: "p1" | "p2" | "p3" | "p4"; dueDate?: Date | null }) => void;
   disabled: boolean;
   index: number;
 }
@@ -16,9 +18,17 @@ export function TodoItemRow({
   item,
   onApprove,
   onReject,
+  onEdit,
   disabled,
   index,
 }: TodoItemRowProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(item.content);
+  const [editPriority, setEditPriority] = useState(item.priority as "p1" | "p2" | "p3" | "p4");
+  const [editDueDate, setEditDueDate] = useState(
+    item.dueDate ? item.dueDate.toISOString().split("T")[0] : ""
+  );
+
   const priorityConfig = {
     p1: {
       bg: "bg-red-500/20",
@@ -51,6 +61,102 @@ export function TodoItemRow({
   };
 
   const priority = priorityConfig[item.priority as keyof typeof priorityConfig] || priorityConfig.p4;
+
+  const handleSave = () => {
+    if (onEdit && editContent.trim()) {
+      onEdit(item.id, {
+        content: editContent.trim(),
+        priority: editPriority,
+        dueDate: editDueDate ? new Date(editDueDate) : null,
+      });
+      setIsEditing(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setEditContent(item.content);
+    setEditPriority(item.priority as "p1" | "p2" | "p3" | "p4");
+    setEditDueDate(item.dueDate ? item.dueDate.toISOString().split("T")[0] : "");
+    setIsEditing(false);
+  };
+
+  if (isEditing) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20, scale: 0.95 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, x: -100, scale: 0.9 }}
+        transition={{
+          duration: 0.4,
+          delay: index * 0.1,
+          type: "spring",
+          stiffness: 100,
+          damping: 15,
+        }}
+        className="flex items-start gap-4 p-5 rounded-xl border bg-zinc-900/80 border-blue-500/40"
+      >
+        <div className="mt-1 w-6 h-6 rounded-full border-2 border-blue-500 flex items-center justify-center">
+          <Edit2 className="w-3 h-3 text-blue-400" />
+        </div>
+
+        <div className="flex-1 min-w-0 space-y-3">
+          <input
+            type="text"
+            value={editContent}
+            onChange={(e) => setEditContent(e.target.value)}
+            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+            placeholder="Task content"
+          />
+
+          <div className="flex gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Flag className="w-4 h-4 text-zinc-400" />
+              <select
+                value={editPriority}
+                onChange={(e) => setEditPriority(e.target.value as "p1" | "p2" | "p3" | "p4")}
+                className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
+              >
+                <option value="p1">High</option>
+                <option value="p2">Medium-High</option>
+                <option value="p3">Medium</option>
+                <option value="p4">Low</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-zinc-400" />
+              <input
+                type="date"
+                value={editDueDate}
+                onChange={(e) => setEditDueDate(e.target.value)}
+                className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <motion.button
+              onClick={handleSave}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 border border-blue-500/30"
+            >
+              <Save className="w-3.5 h-3.5" />
+              Save
+            </motion.button>
+            <motion.button
+              onClick={handleCancel}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="bg-zinc-800 hover:bg-zinc-700 text-zinc-400 px-3 py-1.5 rounded-lg text-sm font-medium"
+            >
+              Cancel
+            </motion.button>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -184,6 +290,17 @@ export function TodoItemRow({
               exit={{ opacity: 0, x: -20 }}
               className="flex gap-2"
             >
+              {onEdit && (
+                <motion.button
+                  onClick={() => setIsEditing(true)}
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                  className="bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 hover:text-blue-300 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 border border-blue-500/30"
+                >
+                  <Edit2 className="w-4 h-4" />
+                </motion.button>
+              )}
+
               <motion.button
                 onClick={onApprove}
                 disabled={disabled}

@@ -1,6 +1,7 @@
 import { index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { user } from "./auth";
 import { relations } from "drizzle-orm";
+import { todoItem } from "./todoItem";
 
 export const process = pgTable(
   "process",
@@ -25,12 +26,17 @@ export const process = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
   },
-  (table) => [index("process_user_id_idx").on(table.userId)],
+  (table) => [
+    index("process_user_id_idx").on(table.userId),
+    index("process_created_at_idx").on(table.createdAt),
+    index("process_status_idx").on(table.status),
+  ],
 );
 
-export const processRelations = relations(process, ({ one }) => ({
+export const processRelations = relations(process, ({ one, many }) => ({
   user: one(user, {
     fields: [process.userId],
     references: [user.id],
   }),
+  todoItems: many(todoItem),
 }));
