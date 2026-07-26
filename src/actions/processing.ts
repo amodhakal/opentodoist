@@ -6,6 +6,7 @@ import { and, eq, isNull, gte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import * as Sentry from "@sentry/nextjs";
+import { generateEmbedding, findSimilarTask } from "@/lib/ai/embedding";
 
 const todoItemSchema = z.object({
   content: z.string().min(1),
@@ -241,18 +242,38 @@ export async function processTextWithAI(text: string, processId: string) {
         span.setAttribute("ai.tasks_generated", todoItems.length);
         Sentry.setMeasurement("ai_tasks_generated", todoItems.length, "none");
 
+        const valuesToInsert = [];
+        for (const item of todoItems) {
+          let embedding: number[] | null = null;
+          let isDuplicate = false;
+
+          try {
+            embedding = await generateEmbedding(item.content);
+            if (embedding && embedding.length > 0) {
+              const similar = await findSimilarTask(embedding, 0.85);
+              if (similar) {
+                isDuplicate = true;
+              }
+            }
+          } catch (embedErr) {
+            console.error("Embedding generation/dedup error:", embedErr);
+          }
+
+          valuesToInsert.push({
+            id: crypto.randomUUID(),
+            content: item.content,
+            priority: item.priority,
+            dueDate: item.dueDate ? new Date(item.dueDate) : null,
+            processId,
+            isApproved: null,
+            embedding,
+            isDuplicate,
+          });
+        }
+
         const insertedItems = await db
           .insert(todoItem)
-          .values(
-            todoItems.map((item) => ({
-              id: crypto.randomUUID(),
-              content: item.content,
-              priority: item.priority,
-              dueDate: item.dueDate ? new Date(item.dueDate) : null,
-              processId,
-              isApproved: null,
-            })),
-          )
+          .values(valuesToInsert)
           .returning();
 
         await db
